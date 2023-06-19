@@ -132,49 +132,50 @@ class SmartWorkerAgent:
 
 
     def converse(self, prompt: str) -> str:
-    # Ensure that `prompt` is a string before appending
         if isinstance(prompt, dict):
             prompt = json.dumps(prompt)
         elif not isinstance(prompt, str):
             prompt = str(prompt)
-                
-        self.memory.append(prompt)  # memory is a list, so append prompt
-        response = self.query_gpt(prompt)  # send single prompt to GPT, not entire conversation
+        
+        conversation = self.memory + [prompt]
+        response = self.query_gpt(conversation)
         if any(flag in response for flag in ["/return_contract", "/ready_for_validation", "/run_code", "/write_file"]):
             return self.handle_action(response)
         return response
 
-
-    def query_gpt(self, prompt: str, gpt_version: str = "gpt-3.5-turbo-16k") -> str:
+    def query_gpt(self, conversation: list, gpt_version: str = "gpt-3.5-turbo-16k") -> str:
         openai.api_key = self.gpt_api_key
-        
-        # Appending user's message
-        self.messages.append({"role": "system", "content": prompt})
-        print(prompt)
+
+        # Prepare a new message for the conversation
+        new_message = {"role": "user", "content": conversation[-1]}
+
+        # Append the new message to the conversation
+        self.messages.append(new_message)
+
+        # Prepare the API request parameters
+        params = {
+            "model": gpt_version,
+            "messages": self.messages,
+            "max_tokens": 10000,
+            "temperature": 0.6,
+        }
+
         try:
-            response = openai.ChatCompletion.create(
-                model=gpt_version,
-                messages=self.messages,
-                max_tokens=10000,
-                n=1,
-                stop=None,
-                temperature=0.1,
-            )
-            message = response['choices'][0]['message']['content']
+            response = openai.ChatCompletion.create(**params)
+            message = response.choices[0]['message']['content']
         except Exception as e:
             message = str(e)
 
-        # Appending assistant's message
-        #self.messages.append({"role": "assistant", "content": message})
+        # Append the assistant's message to the conversation
+        self.messages.append({"role": "assistant", "content": message})
         print(message)
-
         return message
 
     def request_additional_input(self) -> str:
         """Request additional input from the contract requester"""
         additional_input_prompt = "Message from contract requester, with additional feedback:"
-        input = input()
-        additional_input_prompt += input
+        input_str = input()
+        additional_input_prompt += input_str
         # Add the additional input prompt as a user message in the conversation
         self.messages.append({"role": "user", "content": additional_input_prompt})
         return additional_input_prompt
