@@ -36,14 +36,27 @@ You will work with multiple experts on each task, coordinating your efforts to r
     def load_contract(self, contract: dict):
         self.contract = contract
 
-    def write_messages_to_file(self, filename):
+    def write_messages_to_file(self, filename: str):
         with open(filename, 'w') as file:
-            json.dump(self.messages, file)
+            json.dump(self.convert_messages_to_strings(self.messages), file)
+
 
     def get_llm_prompt(self) -> str:
         contract = self.contract_to_llm(self.contract)
-        # Here we append a new system message instead of overwriting the entire messages list
-        self.messages.append({"role": "user", "content": f"You are a helpful assistant. Remember to use flags (/return_contract, /ready_for_validation, /write_file, /run_code) Your task is to understand and complete the given contract: {contract}"})
+        
+        # Check if the contract message has already been added
+        contract_message_exists = any(
+            message["role"] == "system" and contract in message["content"]
+            for message in self.messages
+        )
+        
+        # Only append the contract message if it doesn't exist already
+        if not contract_message_exists:
+            self.messages.append({
+                "role": "system", 
+                "content": f"You are a helpful assistant. Your task is to understand and complete the given contract: {contract}"
+            })
+        
         return contract
 
     def contract_to_llm(self, contract_string):
@@ -154,38 +167,36 @@ You will work with multiple experts on each task, coordinating your efforts to r
             feedback = action
         return feedback
 
+    def convert_messages_to_strings(self, messages: list[dict[str, str]]) -> list[str]:
+        return [f"{message['role']}: {message['content']}" for message in messages]
+
+
     def get_feedback_for_action(self, action: str) -> list[str]:
         prompt = f"Your action was: {action}. Please consider this and explain your next steps."
         response = self.converse(prompt)
         return response.split('\n')  # returns a list of steps
 
-    def converse(self, prompt: str) -> str:
-        if isinstance(prompt, dict):
-            prompt = json.dumps(prompt)
-        elif not isinstance(prompt, str):
-            prompt = str(prompt)
-        
-        conversation = self.memory + [prompt]
-        response = self.query_gpt(conversation)
-        if any(flag in response for flag in ["/return_contract", "/ready_for_validation", "/run_code", "/write_file"]):
-            return self.handle_action(response)
-        return response
+    def converse(self, prompt):
+        self.memory.append(prompt)
+        # The expert uses its memory to generate a response
+        response = self.query_gpt(self.memory)
+        feedback = self.get_feedback(response)  # Ensure the get_feedback method is defined in Expert class
+        return response, feedback
+
 
     def query_gpt(self, conversation: list, gpt_version: str = "gpt-3.5-turbo-16k") -> str:
         openai.api_key = self.gpt_api_key
 
         # Prepare a new message for the conversation
-        # print("CONVERSATION: ", conversation[-1])
-        new_message = {"role": "user", "content": conversation[-1]+ "[MESSAGE FROM ORCHIESTRATOR] If needed, Please include one of the following commands in your response as appropriate: /return_contract, /ready_for_validation, /run_code, /write_file."}
+        new_message = {"role": "user", "content": conversation[-1] + "[MESSAGE FROM ORCHESTRATOR] If needed, Please include one of the following commands in your response as appropriate: /return_contract, /ready_for_validation, /run_code, /write_file."}
 
         # Append the new message to the conversation
-        self.messages.append(new_message)
+        conversation_with_new_message = self.messages + [new_message]
 
         # Prepare the API request parameters
-        
         params = {
             "model": gpt_version,
-            "messages": self.messages,
+            "messages": conversation_with_new_message,
             "max_tokens": 10000,
             "temperature": 0.1,
         }
@@ -197,19 +208,19 @@ You will work with multiple experts on each task, coordinating your efforts to r
             message = str(e)
 
         # Check if the response contains a command
-        commands = ["/return_contract", "/ready_for_validation", "/run_code", "/write_file"]
+        commands = ["/return_contract", "/ready_for_validation", "/run_code", '/write_file']
         if any(command in message for command in commands):
             if "/ready_for_validation" in message:
                 return "/ready_for_validation"
             elif "/return_contract" in message:
-                return self.request_additional_input() 
-
+                return self.request_additional_input()
 
         # Append the assistant's message to the conversation
         self.messages.append({"role": "assistant", "content": message})
         print(message)
         self.write_messages_to_file('conversation_history.json')
         return message
+
 
 
 
@@ -224,7 +235,7 @@ You will work with multiple experts on each task, coordinating your efforts to r
 
     def execute(self):
         llm_prompt = self.get_llm_prompt()
-        plan = self.form_plan(llm_prompt) 
+        plan = self.form_plan(llm_prompt)
 
         # Introduce tree of thought with multiple experts
         experts = [Expert(self.gpt_api_key) for _ in range(3)]
@@ -234,8 +245,12 @@ You will work with multiple experts on each task, coordinating your efforts to r
 
         # iterate over each step of the plan
         for action in plan:
+            # Polling mechanism
+            proposed_actions = []
+            feedbacks = []
+            
             for expert in experts:
-                result = expert.converse(action)
+                result, feedback = expert.converse(action)
 
                 while isinstance(result, Exception) or result in past_responses:  # Check for repetition
                     # If the result is a repeat of a past response or an error, get feedback for the action
@@ -244,17 +259,23 @@ You will work with multiple experts on each task, coordinating your efforts to r
 
                 # After receiving result, store it in memory
                 past_responses.add(result)
+                proposed_actions.append(result)
+                feedbacks.append(feedback)
 
-                feedback = self.get_feedback(action)
+            # Decide next action based on expert opinions using majority vote
+            next_action = max(set(proposed_actions), key = proposed_actions.count)
+            action_feedback = feedbacks[proposed_actions.index(next_action)]
 
-                # Check if task is complete or needs to be returned
-                if "/ready_for_validation" in feedback:
-                    break
-                elif "/return_contract" in feedback:
-                    return self.request_additional_input() 
+            # Check if task is complete or needs to be returned
+            if "/ready_for_validation" in next_action:
+                break
+            elif "/return_contract" in next_action:
+                return self.request_additional_input()
 
-                # Use feedback to update llm_prompt for the next action
-                llm_prompt = feedback 
+            # Use feedback to update llm_prompt for the next action
+            llm_prompt = action_feedback
+
+
 
 
 
@@ -268,7 +289,9 @@ class Expert(SmartWorkerAgent):
     def converse(self, prompt):
         self.memory.append(prompt)
         # The expert uses its memory to generate a response
-        return self.query_gpt(self.memory)
+        response = self.query_gpt(self.memory)
+        feedback = self.get_feedback(response)  # Ensure the get_feedback method is defined in Expert class
+        return response, feedback
 
     def revise_response(self, feedback):
         self.memory.append(feedback)
