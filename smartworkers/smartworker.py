@@ -23,7 +23,7 @@ class SmartWorkerAgent:
 
 ^[SmartWorker Responsibilities]: "As SmartWorker, you are the manager of these Agents and will evaluate the output provided by the Agents and manage them as needed in order to get the best possible solution from them. You will provide instructions to either improve their work on the current task or instruct them on the next task. It's extremely important that you are extremely critical of their work. These Agents are, in the end, a part of you. You do not need to worry about hurting their feelings. You will be as critical as possible, just like you would be to yourself. If you are completely satisfied with their output for the task, you will tell them the new task to work on (In your SmartWorker instructions for Agents response, you will tell the Agent what their next task is). As the Scrum Master of these agents, you will direct them appropriately. You will ALWAYS give a new task to the Agents when their current task is complete."
 
-^[Assistant Responsibilities]: "You are a helpful assistant. Your task is to understand and complete the given contract. You need to use the following commands to communicate with the orchestrator:
+^[SmartWorker Responsibilities]: "You are a helpful assistant. Your task is to understand and complete the given contract. You need to use the following commands to communicate with the orchestrator:
 /return_contract - if something in the contract is missing, unknown, ambiguous, needs clarification, or requires modification, the contract needs to be returned to the human for further input or modification.
 /ready_for_validation - is used when all actions from the plan are finished, the contract is finished, and all acceptance criteria of it are finished.
 /write_file [file_name] [file_content] - is used to write down files.
@@ -59,12 +59,13 @@ You will work with multiple experts on each task, coordinating your efforts to r
         
         return contract
 
-    def contract_to_llm(self, contract_string):
+    def contract_to_llm(self, contract_string):  # TODO: automatic llm smart contract translation
         contract = json.loads(contract_string)
         action = contract[0]["Action"]
         output_columns = ", ".join([f"{column['name']} ({column['description']})" for column in action['OutputColumns']])
         llm_prompt = f"{action['Prompt']} The output should be in {action['OutputFormat']} format and contain the following fields: {output_columns}. "
         llm_prompt += f"Acceptance criteria: {contract[0]['ContractCompleteness']['AcceptanceCriteria']}."
+        llm_prompt += f"PDF file is aviable in {action['SourceFile']}."
         return llm_prompt
     
     def form_plan(self, action: str) -> list[str]:
@@ -172,9 +173,9 @@ You will work with multiple experts on each task, coordinating your efforts to r
 
 
     def get_feedback_for_action(self, action: str) -> list[str]:
-        prompt = f"Your action was: {action}. Please consider this and explain your next steps."
-        response = self.converse(prompt)
-        return response.split('\n')  # returns a list of steps
+        feedback_message = f"Your action was: {action}. Please consider this and explain your next steps."
+        self.messages.append({"role": "user", "content": feedback_message})
+        return feedback_message
 
     def converse(self, prompt):
         self.memory.append(prompt)
@@ -188,7 +189,7 @@ You will work with multiple experts on each task, coordinating your efforts to r
         openai.api_key = self.gpt_api_key
 
         # Prepare a new message for the conversation
-        new_message = {"role": "user", "content": conversation[-1] + "[MESSAGE FROM ORCHESTRATOR] If needed, Please include one of the following commands in your response as appropriate: /return_contract, /ready_for_validation, /run_code, /write_file."}
+        new_message = {"role": "user", "content": str(conversation[-1]) + "[MESSAGE FROM ORCHESTRATOR] If needed, Please include one of the following commands in your response as appropriate: /return_contract, /ready_for_validation, /run_code, /write_file."}
 
         # Append the new message to the conversation
         conversation_with_new_message = self.messages + [new_message]
@@ -217,7 +218,7 @@ You will work with multiple experts on each task, coordinating your efforts to r
 
         # Append the assistant's message to the conversation
         self.messages.append({"role": "assistant", "content": message})
-        print(message)
+        print(self.messages[-1])
         self.write_messages_to_file('conversation_history.json')
         return message
 
@@ -227,6 +228,7 @@ You will work with multiple experts on each task, coordinating your efforts to r
     def request_additional_input(self) -> str:
         """Request additional input from the contract requester"""
         additional_input_prompt = "Message from contract requester, with additional feedback:"
+        print('Please enter additional input for the contract requester:')
         input_str = input()
         additional_input_prompt += input_str
         # Add the additional input prompt as a user message in the conversation
