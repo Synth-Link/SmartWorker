@@ -1,7 +1,10 @@
 import openai
 import json
 import subprocess
-
+import logging
+import os
+from nltk import tokenize
+import nltk
 
 class SmartWorkerAgent:
     def __init__(self, gpt_api_key: str, gpt_model: str):
@@ -25,11 +28,14 @@ class SmartWorkerAgent:
 
 ^[SmartWorker Responsibilities]: "You are a helpful assistant. Your task is to understand and complete the given contract. You need to use the following commands to communicate with the orchestrator:
 /return_contract - if something in the contract is missing, unknown, ambiguous, needs clarification, or requires modification, the contract needs to be returned to the human for further input or modification.
-/ready_for_validation - is used when all actions from the plan are finished, the contract is finished, and all acceptance criteria of it are finished.
-/write_file [file_name] [file_content] - is used to write down files.
+/finish_contract - is used when all actions from the plan are finished, the contract is finished, and all acceptance criteria of it are finished.
+/write_file [file_name] [file_content] - is used to write down files created by Smart Worker. If you want to write a file, you need to use this command. You need to put the file content into ```` and use the command.
+/download_file [file_name] [file_content] - is used to download files by Smart Worker.
 /run_code [file_name] - is used to orchestrate launching of the file.
-DO NOT USE THESE COMMANDS UNLESS YOU NEED OR WANT TO SEE THE ACTION.
+DO NOT USE THESE COMMANDS UNLESS YOU NEED OR WANT TO SEE THE ACTION. DO NOT TELL OTHER ACTORS "TO USE THIS COMMAND". IF THE COMMAND WILL BE FOUND IN MESSAGE, IT WILL BE EXECUTED.
+To use any of this command, you need to have a solid justification for it.
 You will work with multiple experts on each task, coordinating your efforts to reach a comprehensive solution. If a task is completed to satisfaction, you should initiate the next one.
+Plan actions and execute them.
             """
         }]
 
@@ -68,18 +74,20 @@ You will work with multiple experts on each task, coordinating your efforts to r
         llm_prompt += f"PDF file is aviable in {action['SourceFile']}."
         return llm_prompt
     
+
     def form_plan(self, action: str) -> list[str]:
         """Query GPT model and use the response as a plan"""
+    # Add a more explicit prompt to encourage the model to form a plan
+        plan_prompt = action + " Now I'm going to form a plan for completing this task."
+        response = self.query_gpt(plan_prompt)
+
         # Plan will be a list of actions to be done
         plan = []
 
-        # Add a more explicit prompt to encourage the model to form a plan
-        plan_prompt = action + " Now I'm going to form a plan for completing this task. The plan will be as follows:"
-        response = self.query_gpt(plan_prompt)
-
         if response:
-            # Here we simply use each line in the response as a separate action
-            plan = response.split('\n')
+            # Use NLTK to extract sentences from the response.
+            # Each sentence should ideally represent a step or action in the plan
+            plan = tokenize.sent_tokenize(response)
         return plan
 
         
@@ -111,9 +119,10 @@ You will work with multiple experts on each task, coordinating your efforts to r
     def handle_action(self, action: str) -> str:
         if "/return_contract" in action:
             return self.request_additional_input()
-        elif "/ready_for_validation" in action:
-            return self.ready_for_validation()
+        elif "/finish_contract" in action:
+            return self.finish_contract()
         elif "/run_code" in action:
+            print('run code command found')
             return self.run_code(action)
         elif "/write_file" in action:
             return self.write_file(action)
@@ -122,8 +131,8 @@ You will work with multiple experts on each task, coordinating your efforts to r
             return self.handle_unrecognized_action(action)
 
 
-    def ready_for_validation(self) -> str:
-        return "/ready_for_validation"
+    def finish_contract(self) -> str:
+        return "/finish_contract"
 
     def run_code(self, action: str) -> str:
         filename = self.validate_filename(action)
@@ -171,11 +180,28 @@ You will work with multiple experts on each task, coordinating your efforts to r
     def convert_messages_to_strings(self, messages: list[dict[str, str]]) -> list[str]:
         return [f"{message['role']}: {message['content']}" for message in messages]
 
+    def confirm_closure(self, action: str) -> str:
+        """Confirm the closure of the contract using GPT model"""
+        confirm_prompt = f"The action performed was: '{action}', which suggests closing the contract. Are you sure you want to proceed with this action?"
+        confirmation = self.query_gpt(confirm_prompt)
 
-    def get_feedback_for_action(self, action: str) -> list[str]:
-        feedback_message = f"Your action was: {action}. Please consider this and explain your next steps."
-        self.messages.append({"role": "user", "content": feedback_message})
-        return feedback_message
+        if not confirmation:
+            # Default feedback in case GPT-3 doesn't provide any.
+            confirmation = "No confirmation was provided by the GPT model for this action."
+
+        return confirmation
+
+
+    def get_feedback_for_action(self, action: str) -> str:
+        """Get feedback for an action using GPT model"""
+        feedback_prompt = f"The action performed was: '{action}'. Please provide feedback on this action."
+        feedback = self.query_gpt(feedback_prompt)
+
+        if not feedback:
+            # Default feedback in case GPT-3 doesn't provide any.
+            feedback = "No feedback was provided by the GPT model for this action."
+
+        return feedback
 
     def converse(self, prompt):
         self.memory.append(prompt)
@@ -189,7 +215,7 @@ You will work with multiple experts on each task, coordinating your efforts to r
         openai.api_key = self.gpt_api_key
 
         # Prepare a new message for the conversation
-        new_message = {"role": "user", "content": str(conversation[-1]) + "[MESSAGE FROM ORCHESTRATOR] If needed, Please include one of the following commands in your response as appropriate: /return_contract, /ready_for_validation, /run_code, /write_file."}
+        new_message = {"role": "user", "content": str(conversation[-1]) + "[MESSAGE FROM ORCHESTRATOR] If needed, Please include one of the following commands in your response as appropriate: /return_contract, /finish_contract, /run_code, /write_file, /read_file."}
 
         # Append the new message to the conversation
         conversation_with_new_message = self.messages + [new_message]
@@ -205,30 +231,33 @@ You will work with multiple experts on each task, coordinating your efforts to r
         try:
             response = openai.ChatCompletion.create(**params)
             message = response.choices[0]['message']['content']
+            logging.info(f"Received message: {message}")
         except Exception as e:
             message = str(e)
+            logging.error(f"Error during message receipt: {message}")
 
         # Check if the response contains a command
-        commands = ["/return_contract", "/ready_for_validation", "/run_code", '/write_file']
+        commands = ["/return_contract", "/finish_contract", "/run_code", '/write_file']
         if any(command in message for command in commands):
-            if "/ready_for_validation" in message:
-                return "/ready_for_validation"
+            if "/finish_contract" in message:
+                confirmation = self.confirm_closure(message)
+                if 'yes' in confirmation.lower():
+                    print('Contract ready for validation')
+                    return "/finish_contract"
             elif "/return_contract" in message:
-                return self.request_additional_input()
+                return self.request_additional_input(message)
 
         # Append the assistant's message to the conversation
         self.messages.append({"role": "assistant", "content": message})
-        print(self.messages[-1])
+        logging.info(f"Added new message to conversation: {self.messages[-1]}")
         self.write_messages_to_file('conversation_history.json')
         return message
 
 
-
-
-    def request_additional_input(self) -> str:
+    def request_additional_input(self, message) -> str:
         """Request additional input from the contract requester"""
         additional_input_prompt = "Message from contract requester, with additional feedback:"
-        print('Please enter additional input for the contract requester:')
+        print(f'Message was: {message}. Please enter additional input for contract executor:')
         input_str = input()
         additional_input_prompt += input_str
         # Add the additional input prompt as a user message in the conversation
@@ -245,37 +274,49 @@ You will work with multiple experts on each task, coordinating your efforts to r
         # Create a set to store past responses
         past_responses = set()
 
+        # create a common_memory for all experts
+        common_memory = []
+
         # iterate over each step of the plan
-        for action in plan:
-            # Polling mechanism
-            proposed_actions = []
-            feedbacks = []
-            
-            for expert in experts:
-                result, feedback = expert.converse(action)
+        while True:
+            for action in plan:
+                common_memory.append(action)
 
-                while isinstance(result, Exception) or result in past_responses:  # Check for repetition
-                    # If the result is a repeat of a past response or an error, get feedback for the action
-                    feedback = self.get_feedback_for_action(result)
-                    result = expert.revise_response(feedback)
+                # Polling mechanism
+                proposed_actions = []
+                feedbacks = []
 
-                # After receiving result, store it in memory
-                past_responses.add(result)
-                proposed_actions.append(result)
-                feedbacks.append(feedback)
+                for expert in experts:
+                    result, feedback = expert.converse(common_memory[-1]) # Now the common_memory contains the last action.
 
-            # Decide next action based on expert opinions using majority vote
-            next_action = max(set(proposed_actions), key = proposed_actions.count)
-            action_feedback = feedbacks[proposed_actions.index(next_action)]
+                    while isinstance(result, Exception) or result in past_responses:  # Check for repetition
+                        # If the result is a repeat of a past response or an error, get feedback for the action
+                        feedback = self.get_feedback_for_action(result)
+                        common_memory.append(feedback)
+                        result = expert.revise_response(common_memory[-1])
 
-            # Check if task is complete or needs to be returned
-            if "/ready_for_validation" in next_action:
-                break
-            elif "/return_contract" in next_action:
-                return self.request_additional_input()
+                    # After receiving result, store it in memory
+                    past_responses.add(result)
+                    proposed_actions.append(result)
+                    feedbacks.append(feedback)
 
-            # Use feedback to update llm_prompt for the next action
-            llm_prompt = action_feedback
+                # Decide next action based on expert opinions using majority vote
+                next_action = max(set(proposed_actions), key = proposed_actions.count)
+                action_feedback = feedbacks[proposed_actions.index(next_action)]
+
+                # Use feedback to update llm_prompt for the next action
+                llm_prompt = action_feedback
+
+                # Check if task needs to be returned for additional input
+                if "/return_contract" in next_action:
+                    return self.request_additional_input(next_action)
+
+                # Verify if the task is completed with self-feedback
+                self_feedback = self.get_feedback_for_action(next_action)
+                
+
+        # Task is completed
+        print("Task completed!")
 
 
 
