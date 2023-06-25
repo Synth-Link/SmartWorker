@@ -1,11 +1,19 @@
 #from smartworkers.smartworker import SmartWorker
 from smartworkers.smartworker import SmartWorkerAgent
 import os
+import nltk
 import json
+import logging
 from dotenv import load_dotenv
 
 
 def main():
+    nltk.download('punkt')
+    logging.basicConfig(level=logging.INFO, 
+                    format='%(asctime)s %(levelname)s: %(message)s', 
+                    filename='log_file.log', 
+                    filemode='w')
+    
     load_dotenv()
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
@@ -21,7 +29,9 @@ def main():
         { "name": "vertical_agl", "description": "Vertical AGL information if provided" },
         { "name": "horizontal", "description": "Horizontal points provided as JSON" }
         ],
-        "OutputFormat": "json"
+        "OutputFormat": "json",
+        "SourceFileFormat": "pdf",
+        "SourceFile": "https://www.ais.pansa.pl/aip/pliki/zmiany/EP_Amdt_A_2023_06_en.pdf"
     },
     "Validation": "The data must be double extracted for verification from the source document. The data must be aligned with ADQ (Aeronautical Data Quality) Standard.",
     "WorkerRequirements": { "Skills": ["PDF splitting dividing", "Data extraction", "Data engineering"] },
@@ -41,7 +51,7 @@ def main():
 
     # Here we load the contract into the worker
     worker.load_contract(contract_string)
-    results = worker.handle_action(contract_string)
+    results = worker.execute()
 
     # Here we just print the results, but in reality you might want to save them somewhere or use in another way
     print("OUTPUTS:",results)
