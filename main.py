@@ -41,13 +41,13 @@ def main():
         "ErrorAcceptance": "0%",
         "AmbiguityAcceptance": "5%"
     },
-    "ContractFail": "Validation or Action is not completed by the network.",
-    "ContractValue": { "Budget": "10 DOT" }
+    "Fail": "Validation or Action is not completed.",
+    "Value": { "Budget": "10 DOT" }
     }]
     """
 
     print(contract_string)
-    worker = SmartWorkerAgent(OPENAI_API_KEY, "gpt-3.5-turbo-16k")
+    worker = SmartWorkerAgent(OPENAI_API_KEY, "gpt-4")
 
     # Here we load the contract into the worker
     worker.load_contract(contract_string)

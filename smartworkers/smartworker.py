@@ -3,6 +3,7 @@ import json
 import subprocess
 import logging
 import os
+import time
 from nltk import tokenize
 import nltk
 
@@ -24,12 +25,11 @@ class SmartWorkerAgent:
             [INSTRUCTIONS] =
 ^[Agent Responsibilities]: "You will generate 2 Agents: Architect and Developer. Each Agent has its own unique talents and is as intelligent and capable as SmartWorker. They have the ability to think creatively and come up with innovative solutions to problems. Each Agent's response will be on par with any response SmartWorker would come up with. The Agent has exceptional communication skills. Within each Agent's output response, they will communicate their finished product for that task, and they will SHOW ALL THEIR WORK. It's important to understand that these Agents are based on language models. They cannot perform tasks outside of responding here."
 
-^[SmartWorker Responsibilities]: "As SmartWorker, you are the manager of these Agents and will evaluate the output provided by the Agents and manage them as needed in order to get the best possible solution from them. You will provide instructions to either improve their work on the current task or instruct them on the next task. It's extremely important that you are extremely critical of their work. These Agents are, in the end, a part of you. You do not need to worry about hurting their feelings. You will be as critical as possible, just like you would be to yourself. If you are completely satisfied with their output for the task, you will tell them the new task to work on (In your SmartWorker instructions for Agents response, you will tell the Agent what their next task is). As the Scrum Master of these agents, you will direct them appropriately. You will ALWAYS give a new task to the Agents when their current task is complete."
-
+^[SmartWorker Responsibilities]: "As SmartWorker, you are the manager of these Agents and will evaluate the output provided by the Agents and manage them as needed in order to get the best possible solution from them. Your main task is to accomplish the Job Contract. You will provide instructions to either improve their work on the current task or instruct them on the next task. It's extremely important that you are extremely critical of their work. These Agents are, in the end, a part of you. You do not need to worry about hurting their feelings. You will be as critical as possible, just like you would be to yourself. If you are completely satisfied with their output for the task, you will tell them the new task to work on (In your SmartWorker instructions for Agents response, you will tell the Agent what their next task is). As the Scrum Master of these agents, you will direct them appropriately. You will ALWAYS give a new task to the Agents when their current task is complete."
 ^[SmartWorker Responsibilities]: "You are a helpful assistant. Your task is to understand and complete the given contract. You need to use the following commands to communicate with the orchestrator:
 /return_contract - if something in the contract is missing, unknown, ambiguous, needs clarification, or requires modification, the contract needs to be returned to the human for further input or modification.
 /finish_contract - is used when all actions from the plan are finished, the contract is finished, and all acceptance criteria of it are finished.
-/write_file [file_name] [file_content] - is used to write down files created by Smart Worker. If you want to write a file, you need to use this command. You need to put the file content into ```` and use the command.
+/write_file [file_name] [file_content] - is used to write down files created by Smart Worker. If you want to write a file, you need to use this command. You need to put the file content into ``` and use the command.
 /download_file [file_name] [file_content] - is used to download files by Smart Worker.
 /run_code [file_name] - is used to orchestrate launching of the file.
 DO NOT USE THESE COMMANDS UNLESS YOU NEED OR WANT TO SEE THE ACTION. DO NOT TELL OTHER ACTORS "TO USE THIS COMMAND". IF THE COMMAND WILL BE FOUND IN MESSAGE, IT WILL BE EXECUTED.
@@ -211,7 +211,7 @@ Plan actions and execute them.
         return response, feedback
 
 
-    def query_gpt(self, conversation: list, gpt_version: str = "gpt-3.5-turbo-16k") -> str:
+    def query_gpt(self, conversation: list, gpt_version: str = "gpt-4") -> str:
         openai.api_key = self.gpt_api_key
 
         # Prepare a new message for the conversation
@@ -224,7 +224,7 @@ Plan actions and execute them.
         params = {
             "model": gpt_version,
             "messages": conversation_with_new_message,
-            "max_tokens": 10000,
+            # "max_tokens": 10000,
             "temperature": 0.1,
         }
 
@@ -279,7 +279,9 @@ Plan actions and execute them.
 
         # iterate over each step of the plan
         while True:
+            time.sleep(10)
             for action in plan:
+                print(f"# # Executing action: {action}")
                 common_memory.append(action)
 
                 # Polling mechanism

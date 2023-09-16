@@ -1,7 +1,8 @@
 from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
-import os
 from smartworkers.pdf_smartworker import PdfSmartWorker
+import os
+import logging
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = '/path/to/upload/directory'  # set this to your desired path
